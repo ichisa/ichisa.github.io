@@ -41,7 +41,12 @@
             gap: 10px;
             margin-bottom: 12px;
         }
-        .bird-icon { font-size: 34px; }
+        .bird-icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 8px;
+            object-fit: cover;
+        }
         .bird-header h2 {
             font-size: 16px;
             color: #c0392b;
@@ -238,11 +243,11 @@
 
 <div id="map"></div>
 
-<button id="panelToggle" onclick="document.getElementById('panel').classList.toggle('hidden')">🐦</button>
+<button id="panelToggle" onclick="document.getElementById('panel').classList.toggle('hidden')" style="padding:4px 6px"><img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/88/Scarlet_Flycatcher_%28Pyrocephalus_rubinus%29_male%2C_Pantanal%2C_Brazil_2.jpg/512px-Scarlet_Flycatcher_%28Pyrocephalus_rubinus%29_male%2C_Pantanal%2C_Brazil_2.jpg" alt="🐦" style="width:28px;height:28px;border-radius:6px;object-fit:cover"></button>
 
 <div id="panel">
     <div class="bird-header">
-        <span class="bird-icon">🐦</span>
+        <img class="bird-icon" src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/88/Scarlet_Flycatcher_%28Pyrocephalus_rubinus%29_male%2C_Pantanal%2C_Brazil_2.jpg/512px-Scarlet_Flycatcher_%28Pyrocephalus_rubinus%29_male%2C_Pantanal%2C_Brazil_2.jpg" alt="Vermilion Flycatcher">
         <div>
             <h2>Vermilion Flycatcher</h2>
             <span class="subtitle">Pyrocephalus rubinus — Migration Map</span>
@@ -323,7 +328,7 @@ let playTimer   = null;
 //  MAP INIT
 // ================================================================
 const map = L.map('map', {
-    center: [5, -80],
+    center: [-38.5, -63.5],
     zoom: 4,
     minZoom: 2,
     maxZoom: 14,

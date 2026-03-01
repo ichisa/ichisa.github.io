@@ -1,0 +1,14 @@
+[general]
+name=EPH GeoParquet Loader
+qgisMinimumVersion=3.22
+description=Load EPH household survey data from a remote GeoParquet (source.coop) using DuckDB
+version=0.1.0
+author=EPH Project
+email=your@email.com
+about=Minimal plugin that queries a remote GeoParquet file on source.coop via DuckDB, lets the user pick an aglomerado and columns, and creates a temporary QGIS layer.
+tracker=https://github.com/your/repo/issues
+repository=https://github.com/your/repo
+tags=eph,geoparquet,duckdb,argentina,census
+category=Vector
+experimental=False
+deprecated=False
