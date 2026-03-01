@@ -1,0 +1,7 @@
+# Raw eBird data downloads (too large for GitHub)
+data/pyrocephalus_rubinus/
+data/pyrocephalus_rubinus.zip
+
+# Python
+__pycache__/
+*.pyc

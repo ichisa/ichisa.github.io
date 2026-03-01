@@ -249,29 +249,6 @@
         </div>
     </div>
 
-    <!-- API key -->
-    <div class="form-group">
-        <label for="apiKey">eBird API Key</label>
-        <input type="password" id="apiKey" placeholder="Paste your eBird API key here">
-    </div>
-
-    <div class="row">
-        <div class="form-group">
-            <label for="yearSelect">Year</label>
-            <select id="yearSelect">
-                <option value="2025" selected>2025</option>
-                <option value="2024">2024</option>
-                <option value="2023">2023</option>
-            </select>
-        </div>
-        <div class="form-group">
-            <label>&nbsp;</label>
-            <button class="btn btn-primary" id="loadBtn" onclick="loadAllData()">
-                📡 Load eBird Data
-            </button>
-        </div>
-    </div>
-
     <!-- Progress -->
     <div class="progress-wrap" id="progressWrap">
         <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
@@ -314,7 +291,8 @@
     Data from <a href="https://ebird.org" target="_blank">eBird</a> —
     Cornell Lab of Ornithology.<br>
     The heatmap shows observation density of <em>Pyrocephalus rubinus</em>
-    for each month, revealing its seasonal migration pattern.
+    for each calendar month (all years combined), revealing its
+    seasonal migration pattern across the Americas.
 </div>
 
 <!-- ── Scripts ── -->
@@ -325,50 +303,21 @@
 // ================================================================
 //  CONFIGURATION
 // ================================================================
-const SPECIES_CODE = 'verfly';          // eBird species code
+const SPECIES_CODE = 'verfly';
 const SPECIES_SCI  = 'Pyrocephalus rubinus';
 const MONTH_NAMES  = [
     'January','February','March','April','May','June',
     'July','August','September','October','November','December'
 ];
 
-// Regions to query — covering the full range of Vermilion Flycatcher
-// Use subnational1 for MX & BR to avoid response truncation
-const REGIONS = [
-    // USA – key states
-    'US-AZ','US-TX','US-NM','US-CA','US-OK','US-LA','US-FL',
-    'US-NV','US-UT','US-CO','US-KS','US-AR','US-MS',
-    'US-GA','US-SC','US-AL','US-NE','US-MO',
-    // Mexico – individual states
-    'MX-AGU','MX-BCN','MX-BCS','MX-CAM','MX-CHH','MX-CHP',
-    'MX-COA','MX-COL','MX-DIF','MX-DUR','MX-GRO','MX-GUA',
-    'MX-HID','MX-JAL','MX-MEX','MX-MIC','MX-MOR','MX-NAY',
-    'MX-NLE','MX-OAX','MX-PUE','MX-QUE','MX-ROO','MX-SIN',
-    'MX-SLP','MX-SON','MX-TAB','MX-TAM','MX-TLA','MX-VER',
-    'MX-YUC','MX-ZAC',
-    // Central America
-    'GT','BZ','HN','SV','NI','CR','PA',
-    // South America
-    'CO','VE','EC','PE','BO','PY','AR','UY','CL','GY','SR','TT',
-    // Brazil – key states
-    'BR-SP','BR-RJ','BR-MG','BR-GO','BR-DF','BR-MS','BR-MT',
-    'BR-BA','BR-PR','BR-SC','BR-RS','BR-TO','BR-MA','BR-PI',
-    'BR-CE','BR-PE','BR-PA'
-];
-
-// Sample days per month (the Python script uses more; live mode uses fewer)
-const SAMPLE_DAYS = [15];
-
 // ================================================================
 //  STATE
 // ================================================================
-let monthlyData  = {};          // { 1: [{lat,lng,count}, …], … , 12: [...] }
-let heatLayer    = null;
-let curMonth     = 1;
-let playing      = false;
-let playTimer    = null;
-let totalQ       = 0;
-let doneQ        = 0;
+let monthlyData = {};   // { 1: [{lat, lng, count, nobs}, …], … }
+let heatLayer   = null;
+let curMonth    = 1;
+let playing     = false;
+let playTimer   = null;
 
 // ================================================================
 //  MAP INIT
@@ -388,190 +337,65 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 // ================================================================
-//  DATA FETCHING — eBird API v2
+//  HELPERS
 // ================================================================
-
-/** Small delay helper */
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-/** Set status text */
-function setStatus(msg) { document.getElementById('status').textContent = msg; }
-
-/** Update progress bar */
-function updateProgress() {
-    const pct = totalQ ? Math.round(doneQ / totalQ * 100) : 0;
-    document.getElementById('progressFill').style.width = pct + '%';
-    document.getElementById('progressText').textContent =
-        `Fetching… ${doneQ} / ${totalQ} queries (${pct}%)`;
+function setStatus(msg) {
+    document.getElementById('status').textContent = msg;
 }
+
+// ================================================================
+//  LOAD GeoJSON DATA  (pre-built from eBird text files)
+// ================================================================
 
 /**
- * Fetch historic observations for one region + date.
- *
- * Uses the GENERAL historic endpoint + client-side species filter.
- * The eBird API does NOT have a species-specific historic endpoint.
- * We add maxResults=10000 to avoid response truncation.
+ * Load the 12 monthly GeoJSON files produced by
+ * build_monthly_geojson.py.  Each file is a FeatureCollection
+ * of Points with properties { count, nobs }.
  */
-async function fetchHistoric(apiKey, region, y, m, d) {
-    const url = `https://api.ebird.org/v2/data/obs/${region}/historic/${y}/${m}/${d}?maxResults=10000&includeProvisional=true`;
-    try {
-        const r = await fetch(url, { headers: { 'X-eBirdApiToken': apiKey } });
-        if (!r.ok) return [];
-        let data = await r.json();
+async function loadGeoJSON() {
+    setStatus('📦 Loading observation data…');
 
-        // Filter for our target species
-        data = data.filter(o =>
-            o.speciesCode === SPECIES_CODE ||
-            (o.sciName && o.sciName.toLowerCase().includes('pyrocephalus'))
-        );
-
-        return data.map(o => ({
-            lat: o.lat,
-            lng: o.lng,
-            count: o.howMany || 1,
-            loc: o.locName || '',
-            date: o.obsDt || ''
-        }));
-    } catch (e) {
-        console.warn(`fetch error ${region} ${y}/${m}/${d}`, e);
-        return [];
-    }
-}
-
-/**
- * Fetch recent observations of the species in a region (last 30 days).
- */
-async function fetchRecent(apiKey, region) {
-    const url = `https://api.ebird.org/v2/data/obs/${region}/recent/${SPECIES_CODE}?back=30&includeProvisional=true`;
-    try {
-        const r = await fetch(url, { headers: { 'X-eBirdApiToken': apiKey } });
-        if (!r.ok) return [];
-        const data = await r.json();
-        return data.map(o => ({
-            lat: o.lat,
-            lng: o.lng,
-            count: o.howMany || 1,
-            loc: o.locName || '',
-            date: o.obsDt || '',
-            month: o.obsDt ? parseInt(o.obsDt.split('-')[1], 10) : null
-        }));
-    } catch (e) {
-        return [];
-    }
-}
-
-// ================================================================
-//  MAIN LOAD FUNCTION
-// ================================================================
-
-async function loadAllData() {
-    const apiKey = document.getElementById('apiKey').value.trim();
-    if (!apiKey) { setStatus('⚠️ Please enter your eBird API key.'); return; }
-
-    const year = document.getElementById('yearSelect').value;
-    const btn  = document.getElementById('loadBtn');
-    btn.disabled = true;
-
-    // Reset monthly buckets
-    for (let m = 1; m <= 12; m++) monthlyData[m] = [];
-
-    // Show progress
     const pw = document.getElementById('progressWrap');
     pw.style.display = 'block';
 
-    // Total queries: (regions × months × sample_days) + (regions for recent)
-    totalQ = REGIONS.length * 12 * SAMPLE_DAYS.length + REGIONS.length;
-    doneQ  = 0;
-    updateProgress();
+    let totalPoints = 0;
 
-    setStatus('📡 Fetching historic data (general endpoint + species filter)…');
-
-    // 1. Historic data for each month
-    for (let month = 1; month <= 12; month++) {
-        for (const region of REGIONS) {
-            for (const day of SAMPLE_DAYS) {
-                const obs = await fetchHistoric(apiKey, region, year, month, day);
-                if (obs.length) monthlyData[month].push(...obs);
-                doneQ++;
-                updateProgress();
-                await sleep(120);   // respect rate limits
-            }
-        }
-        setStatus(`📊 Month ${month}/12 done — ${monthlyData[month].length} obs so far`);
-    }
-
-    // 2. Also pull recent observations (adds current-month data)
-    setStatus('📡 Fetching recent (last 30 days)…');
-    for (const region of REGIONS) {
-        const obs = await fetchRecent(apiKey, region);
-        for (const o of obs) {
-            if (o.month >= 1 && o.month <= 12) monthlyData[o.month].push(o);
-        }
-        doneQ++;
-        updateProgress();
-        await sleep(100);
-    }
-
-    // 3. Deduplicate
-    for (let m = 1; m <= 12; m++) monthlyData[m] = dedup(monthlyData[m]);
-
-    // 4. Done
-    pw.style.display = 'none';
-    btn.disabled = false;
-    document.getElementById('monthSection').style.display = 'block';
-    document.getElementById('legendBox').style.display = 'block';
-
-    const total = Object.values(monthlyData).reduce((s, a) => s + a.length, 0);
-    setStatus(`✅ Loaded ${total} observations across 12 months.`);
-
-    // Cache
-    try {
-        localStorage.setItem(`ebird_${SPECIES_CODE}_${year}`, JSON.stringify(monthlyData));
-    } catch (_) {}
-
-    showMonth(1);
-}
-
-/** Remove duplicate lat/lng within a month, keeping highest count */
-function dedup(arr) {
-    const m = new Map();
-    for (const o of arr) {
-        const k = `${o.lat.toFixed(4)},${o.lng.toFixed(4)}`;
-        const cur = m.get(k);
-        if (!cur || o.count > cur.count) m.set(k, o);
-    }
-    return [...m.values()];
-}
-
-// ================================================================
-//  STATIC DATA LOADER  (pre-fetched via fetch_ebird_data.py)
-// ================================================================
-
-async function tryLoadStatic() {
-    const year = document.getElementById('yearSelect').value;
-
-    // Try to load month-01.json as a test
-    try {
-        const r = await fetch(`data/month-01.json`);
-        if (!r.ok) return false;
-        const test = await r.json();
-        if (!Array.isArray(test)) return false;
-    } catch (_) { return false; }
-
-    // Load all 12 months
     for (let m = 1; m <= 12; m++) {
+        const pad = String(m).padStart(2, '0');
         try {
-            const r = await fetch(`data/month-${String(m).padStart(2,'0')}.json`);
-            monthlyData[m] = r.ok ? await r.json() : [];
-        } catch (_) { monthlyData[m] = []; }
+            const r = await fetch(`data/month-${pad}.geojson`);
+            if (!r.ok) { monthlyData[m] = []; continue; }
+            const gj = await r.json();
+
+            // Convert GeoJSON features → flat array
+            monthlyData[m] = gj.features.map(f => ({
+                lat:   f.geometry.coordinates[1],
+                lng:   f.geometry.coordinates[0],
+                count: f.properties.count || 1,
+                nobs:  f.properties.nobs  || 1,
+            }));
+            totalPoints += monthlyData[m].length;
+        } catch (_) {
+            monthlyData[m] = [];
+        }
+
+        // update progress
+        const pct = Math.round(m / 12 * 100);
+        document.getElementById('progressFill').style.width = pct + '%';
+        document.getElementById('progressText').textContent =
+            `Loading month ${m}/12…`;
     }
 
-    const total = Object.values(monthlyData).reduce((s, a) => s + a.length, 0);
-    if (total === 0) return false;
+    pw.style.display = 'none';
+
+    if (totalPoints === 0) {
+        setStatus('⚠️ No GeoJSON data found. Run build_monthly_geojson.py first.');
+        return false;
+    }
 
     document.getElementById('monthSection').style.display = 'block';
     document.getElementById('legendBox').style.display = 'block';
-    setStatus(`📦 Loaded ${total} pre-fetched observations. Use "Load eBird Data" to refresh.`);
+    setStatus(`✅ Loaded ${totalPoints.toLocaleString()} grid cells across 12 months (all years combined).`);
     showMonth(1);
     return true;
 }
@@ -587,34 +411,36 @@ function showMonth(m) {
     document.getElementById('monthDisplay').textContent = MONTH_NAMES[m - 1];
 
     const data = monthlyData[m] || [];
+    const totalBirds = data.reduce((s, d) => s + d.count, 0);
     document.getElementById('obsCount').textContent =
-        `${data.length} observation${data.length === 1 ? '' : 's'}`;
+        `${data.length.toLocaleString()} cells · ${totalBirds.toLocaleString()} individuals`;
 
     // Remove old layer
     if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
     if (!data.length) return;
 
-    // Build [lat, lng, intensity]
-    const maxC = Math.max(...data.map(d => d.count), 1);
-    const pts  = data.map(d => [
+    // Use log-scale intensity so a few huge counts don't wash out
+    // the rest of the map.  log(1)=0, so we shift by +1.
+    const logMax = Math.log(Math.max(...data.map(d => d.count)) + 1);
+    const pts = data.map(d => [
         d.lat,
         d.lng,
-        Math.max(0.25, d.count / maxC)
+        Math.max(0.15, Math.log(d.count + 1) / logMax)
     ]);
 
     heatLayer = L.heatLayer(pts, {
-        radius: 22,
-        blur: 18,
+        radius: 18,
+        blur: 16,
         maxZoom: 10,
         max: 1.0,
-        minOpacity: 0.25,
+        minOpacity: 0.18,
         gradient: {
-            0.0: 'rgba(255,255,200,0.15)',
-            0.15:'rgba(254,217,118,0.45)',
-            0.35:'rgba(254,178,76,0.65)',
-            0.55:'rgba(253,141,60,0.78)',
-            0.75:'rgba(240,59,32,0.88)',
-            1.0: 'rgba(189,0,38,1)'
+            0.0:  'rgba(255,255,204,0.10)',
+            0.15: 'rgba(254,217,118,0.40)',
+            0.35: 'rgba(254,178,76,0.60)',
+            0.55: 'rgba(253,141,60,0.75)',
+            0.75: 'rgba(240,59,32,0.88)',
+            1.0:  'rgba(189,0,38,1)'
         }
     }).addTo(map);
 }
@@ -623,9 +449,8 @@ function showMonth(m) {
 //  ANIMATION
 // ================================================================
 
-function togglePlay() {
-    playing ? stopPlay() : startPlay();
-}
+function togglePlay() { playing ? stopPlay() : startPlay(); }
+
 function startPlay() {
     playing = true;
     document.getElementById('playBtn').textContent = '⏸ Pause';
@@ -645,34 +470,13 @@ function stepMonth(dir) {
 }
 
 // ================================================================
-//  CACHED & STATIC BOOT
+//  BOOT — load GeoJSON on page open
 // ================================================================
-
 (async function boot() {
-    // 1. Try localStorage cache
-    const year = document.getElementById('yearSelect').value;
-    const ck = `ebird_${SPECIES_CODE}_${year}`;
-    try {
-        const cached = localStorage.getItem(ck);
-        if (cached) {
-            monthlyData = JSON.parse(cached);
-            const total = Object.values(monthlyData).reduce((s, a) => s + a.length, 0);
-            if (total > 0) {
-                document.getElementById('monthSection').style.display = 'block';
-                document.getElementById('legendBox').style.display = 'block';
-                setStatus(`📦 ${total} cached observations loaded. Click "Load eBird Data" to refresh.`);
-                showMonth(1);
-                return;
-            }
-        }
-    } catch (_) {}
-
-    // 2. Try pre-fetched static JSON files
-    const ok = await tryLoadStatic();
-    if (ok) return;
-
-    // 3. No data — prompt user
-    setStatus('Enter your eBird API key and click "Load eBird Data" to begin.');
+    const ok = await loadGeoJSON();
+    if (!ok) {
+        setStatus('⚠️ Could not load data. Make sure data/month-XX.geojson files exist.');
+    }
 })();
 </script>
 
