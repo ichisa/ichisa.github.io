@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vermilion Flycatcher Migration Map</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; }
+
+        #map {
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0; left: 0;
+            background: #1a1a2e;
+        }
+
+        /* ── Control Panel ── */
+        #panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: rgba(255,255,255,0.96);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+            max-width: 370px;
+            min-width: 310px;
+            transition: opacity 0.3s;
+        }
+
+        .bird-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .bird-icon { font-size: 34px; }
+        .bird-header h2 {
+            font-size: 16px;
+            color: #c0392b;
+            margin: 0;
+        }
+        .bird-header .subtitle {
+            font-size: 11px;
+            color: #666;
+            font-style: italic;
+        }
+
+        .form-group { margin-bottom: 10px; }
+        .form-group label {
+            display: block;
+            font-size: 11px;
+            font-weight: 600;
+            margin-bottom: 3px;
+            color: #444;
+        }
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 7px 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        .row { display: flex; gap: 8px; align-items: flex-end; }
+        .row .form-group { flex: 1; }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-primary { background: #c0392b; color: #fff; }
+        .btn-primary:hover { background: #a93226; }
+        .btn-primary:disabled { background: #bbb; cursor: not-allowed; }
+        .btn-sm { padding: 6px 12px; font-size: 12px; }
+        .btn-dark { background: #444; color: #fff; }
+        .btn-dark:hover { background: #333; }
+
+        /* ── Month controls ── */
+        .month-section {
+            margin-top: 14px;
+            border-top: 1px solid #eee;
+            padding-top: 14px;
+        }
+        .month-display {
+            font-size: 24px;
+            font-weight: 700;
+            text-align: center;
+            color: #c0392b;
+        }
+        .obs-count {
+            font-size: 11px;
+            text-align: center;
+            color: #888;
+            margin-bottom: 6px;
+        }
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: #ddd;
+            outline: none;
+            margin: 8px 0;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px; height: 18px;
+            border-radius: 50%;
+            background: #c0392b;
+            cursor: pointer;
+        }
+        .month-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 8px;
+            color: #aaa;
+            padding: 0 2px;
+        }
+        .anim-btns {
+            display: flex;
+            gap: 6px;
+            justify-content: center;
+            margin-top: 10px;
+        }
+
+        /* ── Progress ── */
+        .progress-wrap { margin-top: 10px; display: none; }
+        .progress-bar {
+            width: 100%;
+            height: 5px;
+            background: #eee;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg,#c0392b,#e74c3c);
+            transition: width 0.25s;
+            border-radius: 3px;
+        }
+        .progress-text {
+            font-size: 10px;
+            color: #999;
+            text-align: center;
+            margin-top: 3px;
+        }
+
+        /* ── Legend ── */
+        .legend {
+            margin-top: 12px;
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+        }
+        .legend-title { font-size: 11px; font-weight: 600; margin-bottom: 5px; }
+        .legend-bar {
+            height: 10px;
+            border-radius: 4px;
+            background: linear-gradient(to right,
+                rgba(255,255,200,0.3),
+                rgba(254,217,118,0.55),
+                rgba(254,178,76,0.7),
+                rgba(253,141,60,0.8),
+                rgba(240,59,32,0.9),
+                rgba(189,0,38,1));
+        }
+        .legend-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 9px;
+            color: #999;
+            margin-top: 2px;
+        }
+
+        #status {
+            font-size: 11px;
+            color: #888;
+            margin-top: 8px;
+            text-align: center;
+            min-height: 15px;
+            line-height: 1.4;
+        }
+
+        /* ── Mobile toggle ── */
+        #panelToggle {
+            display: none;
+            position: absolute;
+            top: 10px; right: 10px;
+            z-index: 1001;
+            background: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+            cursor: pointer;
+            font-size: 20px;
+        }
+        @media (max-width: 500px) {
+            #panel { max-width: calc(100vw - 20px); min-width: unset; font-size: 12px; }
+            #panelToggle { display: block; }
+            #panel.hidden { display: none; }
+        }
+
+        /* ── Info box (bottom-left) ── */
+        .info-box {
+            position: absolute;
+            bottom: 26px; left: 10px;
+            z-index: 1000;
+            background: rgba(255,255,255,0.92);
+            border-radius: 8px;
+            padding: 10px 14px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+            font-size: 11px;
+            color: #555;
+            max-width: 320px;
+            line-height: 1.5;
+        }
+        .info-box a { color: #c0392b; }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<button id="panelToggle" onclick="document.getElementById('panel').classList.toggle('hidden')">🐦</button>
+
+<div id="panel">
+    <div class="bird-header">
+        <span class="bird-icon">🐦</span>
+        <div>
+            <h2>Vermilion Flycatcher</h2>
+            <span class="subtitle">Pyrocephalus rubinus — Migration Map</span>
+        </div>
+    </div>
+
+    <!-- API key -->
+    <div class="form-group">
+        <label for="apiKey">eBird API Key</label>
+        <input type="password" id="apiKey" placeholder="Paste your eBird API key here">
+    </div>
+
+    <div class="row">
+        <div class="form-group">
+            <label for="yearSelect">Year</label>
+            <select id="yearSelect">
+                <option value="2025" selected>2025</option>
+                <option value="2024">2024</option>
+                <option value="2023">2023</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>&nbsp;</label>
+            <button class="btn btn-primary" id="loadBtn" onclick="loadAllData()">
+                📡 Load eBird Data
+            </button>
+        </div>
+    </div>
+
+    <!-- Progress -->
+    <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress-text" id="progressText">Loading…</div>
+    </div>
+
+    <div id="status"></div>
+
+    <!-- Month controls (hidden until data loads) -->
+    <div class="month-section" id="monthSection" style="display:none">
+        <div class="month-display" id="monthDisplay">January</div>
+        <div class="obs-count" id="obsCount">—</div>
+
+        <input type="range" id="monthSlider" min="1" max="12" value="1"
+               oninput="showMonth(+this.value)">
+
+        <div class="month-labels">
+            <span>J</span><span>F</span><span>M</span><span>A</span>
+            <span>M</span><span>J</span><span>J</span><span>A</span>
+            <span>S</span><span>O</span><span>N</span><span>D</span>
+        </div>
+
+        <div class="anim-btns">
+            <button class="btn btn-sm btn-dark" onclick="stepMonth(-1)">◀</button>
+            <button class="btn btn-sm btn-primary" id="playBtn" onclick="togglePlay()">▶ Play</button>
+            <button class="btn btn-sm btn-dark" onclick="stepMonth(1)">▶</button>
+        </div>
+    </div>
+
+    <!-- Legend -->
+    <div class="legend" id="legendBox" style="display:none">
+        <div class="legend-title">Observation density</div>
+        <div class="legend-bar"></div>
+        <div class="legend-labels"><span>Few</span><span>Many</span></div>
+    </div>
+</div>
+
+<!-- Info -->
+<div class="info-box">
+    Data from <a href="https://ebird.org" target="_blank">eBird</a> —
+    Cornell Lab of Ornithology.<br>
+    The heatmap shows observation density of <em>Pyrocephalus rubinus</em>
+    for each month, revealing its seasonal migration pattern.
+</div>
+
+<!-- ── Scripts ── -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+
+<script>
+// ================================================================
+//  CONFIGURATION
+// ================================================================
+const SPECIES_CODE = 'verfly';          // eBird species code
+const SPECIES_SCI  = 'Pyrocephalus rubinus';
+const MONTH_NAMES  = [
+    'January','February','March','April','May','June',
+    'July','August','September','October','November','December'
+];
+
+// Regions to query — covering the full range of Vermilion Flycatcher
+const REGIONS = [
+    // USA – key states in breeding / wintering range
+    'US-AZ','US-TX','US-NM','US-CA','US-OK','US-LA','US-FL',
+    'US-NV','US-UT','US-CO','US-KS','US-AR','US-MS',
+    // Mexico
+    'MX',
+    // Central America
+    'GT','BZ','HN','SV','NI','CR','PA',
+    // South America
+    'CO','VE','EC','PE','BR','BO','PY','AR','UY','CL','GY','SR','TT'
+];
+
+// Sample days per month (the Python script uses more; live mode uses fewer)
+const SAMPLE_DAYS = [15];
+
+// ================================================================
+//  STATE
+// ================================================================
+let monthlyData  = {};          // { 1: [{lat,lng,count}, …], … , 12: [...] }
+let heatLayer    = null;
+let curMonth     = 1;
+let playing      = false;
+let playTimer    = null;
+let totalQ       = 0;
+let doneQ        = 0;
+let speciesEndpointOk = null;   // null = untested
+
+// ================================================================
+//  MAP INIT
+// ================================================================
+const map = L.map('map', {
+    center: [5, -80],
+    zoom: 4,
+    minZoom: 2,
+    maxZoom: 14,
+    worldCopyJump: true,
+    zoomControl: true
+});
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> · Data: <a href="https://ebird.org">eBird</a>',
+    maxZoom: 19
+}).addTo(map);
+
+// ================================================================
+//  DATA FETCHING — eBird API v2
+// ================================================================
+
+/** Small delay helper */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/** Set status text */
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+
+/** Update progress bar */
+function updateProgress() {
+    const pct = totalQ ? Math.round(doneQ / totalQ * 100) : 0;
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressText').textContent =
+        `Fetching… ${doneQ} / ${totalQ} queries (${pct}%)`;
+}
+
+/**
+ * Test whether the species-specific historic endpoint is available.
+ * URL pattern: /v2/data/obs/{region}/historic/{y}/{m}/{d}/{speciesCode}
+ */
+async function testSpeciesEndpoint(apiKey) {
+    const url = `https://api.ebird.org/v2/data/obs/US-TX/historic/2025/6/15/${SPECIES_CODE}`;
+    try {
+        const r = await fetch(url, { headers: { 'X-eBirdApiToken': apiKey } });
+        if (r.ok) { speciesEndpointOk = true; return true; }
+    } catch (_) {}
+    speciesEndpointOk = false;
+    return false;
+}
+
+/**
+ * Fetch historic observations for one region + date.
+ * Tries species-specific URL first; falls back to general + filter.
+ */
+async function fetchHistoric(apiKey, region, y, m, d) {
+    // Build URL
+    let url;
+    if (speciesEndpointOk) {
+        url = `https://api.ebird.org/v2/data/obs/${region}/historic/${y}/${m}/${d}/${SPECIES_CODE}`;
+    } else {
+        url = `https://api.ebird.org/v2/data/obs/${region}/historic/${y}/${m}/${d}`;
+    }
+
+    try {
+        const r = await fetch(url, { headers: { 'X-eBirdApiToken': apiKey } });
+        if (!r.ok) return [];
+        let data = await r.json();
+
+        // If general endpoint, filter for our species
+        if (!speciesEndpointOk) {
+            data = data.filter(o =>
+                o.speciesCode === SPECIES_CODE ||
+                (o.sciName && o.sciName.toLowerCase().includes('pyrocephalus'))
+            );
+        }
+
+        return data.map(o => ({
+            lat: o.lat,
+            lng: o.lng,
+            count: o.howMany || 1,
+            loc: o.locName || '',
+            date: o.obsDt || ''
+        }));
+    } catch (e) {
+        console.warn(`fetch error ${region} ${y}/${m}/${d}`, e);
+        return [];
+    }
+}
+
+/**
+ * Fetch recent observations of the species in a region (last 30 days).
+ */
+async function fetchRecent(apiKey, region) {
+    const url = `https://api.ebird.org/v2/data/obs/${region}/recent/${SPECIES_CODE}?back=30`;
+    try {
+        const r = await fetch(url, { headers: { 'X-eBirdApiToken': apiKey } });
+        if (!r.ok) return [];
+        const data = await r.json();
+        return data.map(o => ({
+            lat: o.lat,
+            lng: o.lng,
+            count: o.howMany || 1,
+            loc: o.locName || '',
+            date: o.obsDt || '',
+            month: o.obsDt ? parseInt(o.obsDt.split('-')[1], 10) : null
+        }));
+    } catch (e) {
+        return [];
+    }
+}
+
+// ================================================================
+//  MAIN LOAD FUNCTION
+// ================================================================
+
+async function loadAllData() {
+    const apiKey = document.getElementById('apiKey').value.trim();
+    if (!apiKey) { setStatus('⚠️ Please enter your eBird API key.'); return; }
+
+    const year = document.getElementById('yearSelect').value;
+    const btn  = document.getElementById('loadBtn');
+    btn.disabled = true;
+
+    // Reset monthly buckets
+    for (let m = 1; m <= 12; m++) monthlyData[m] = [];
+
+    // Show progress
+    const pw = document.getElementById('progressWrap');
+    pw.style.display = 'block';
+
+    // Total queries: (regions × months × sample_days) + (regions for recent)
+    totalQ = REGIONS.length * 12 * SAMPLE_DAYS.length + REGIONS.length;
+    doneQ  = 0;
+    updateProgress();
+
+    // 1. Test species-specific endpoint
+    setStatus('🔍 Testing API endpoint…');
+    await testSpeciesEndpoint(apiKey);
+    setStatus(speciesEndpointOk
+        ? '✅ Species-specific endpoint available — fast mode!'
+        : '⚠️ Using general endpoint + filter (slower but works).');
+
+    // 2. Historic data for each month
+    for (let month = 1; month <= 12; month++) {
+        for (const region of REGIONS) {
+            for (const day of SAMPLE_DAYS) {
+                const obs = await fetchHistoric(apiKey, region, year, month, day);
+                if (obs.length) monthlyData[month].push(...obs);
+                doneQ++;
+                updateProgress();
+                await sleep(120);   // respect rate limits
+            }
+        }
+        setStatus(`📊 Month ${month}/12 done — ${monthlyData[month].length} obs so far`);
+    }
+
+    // 3. Also pull recent observations (adds current-month data)
+    setStatus('📡 Fetching recent (last 30 days)…');
+    for (const region of REGIONS) {
+        const obs = await fetchRecent(apiKey, region);
+        for (const o of obs) {
+            if (o.month >= 1 && o.month <= 12) monthlyData[o.month].push(o);
+        }
+        doneQ++;
+        updateProgress();
+        await sleep(100);
+    }
+
+    // 4. Deduplicate
+    for (let m = 1; m <= 12; m++) monthlyData[m] = dedup(monthlyData[m]);
+
+    // 5. Done
+    pw.style.display = 'none';
+    btn.disabled = false;
+    document.getElementById('monthSection').style.display = 'block';
+    document.getElementById('legendBox').style.display = 'block';
+
+    const total = Object.values(monthlyData).reduce((s, a) => s + a.length, 0);
+    setStatus(`✅ Loaded ${total} observations across 12 months.`);
+
+    // Cache
+    try {
+        localStorage.setItem(`ebird_${SPECIES_CODE}_${year}`, JSON.stringify(monthlyData));
+    } catch (_) {}
+
+    showMonth(1);
+}
+
+/** Remove duplicate lat/lng within a month, keeping highest count */
+function dedup(arr) {
+    const m = new Map();
+    for (const o of arr) {
+        const k = `${o.lat.toFixed(4)},${o.lng.toFixed(4)}`;
+        const cur = m.get(k);
+        if (!cur || o.count > cur.count) m.set(k, o);
+    }
+    return [...m.values()];
+}
+
+// ================================================================
+//  STATIC DATA LOADER  (pre-fetched via fetch_ebird_data.py)
+// ================================================================
+
+async function tryLoadStatic() {
+    const year = document.getElementById('yearSelect').value;
+
+    // Try to load month-01.json as a test
+    try {
+        const r = await fetch(`data/month-01.json`);
+        if (!r.ok) return false;
+        const test = await r.json();
+        if (!Array.isArray(test)) return false;
+    } catch (_) { return false; }
+
+    // Load all 12 months
+    for (let m = 1; m <= 12; m++) {
+        try {
+            const r = await fetch(`data/month-${String(m).padStart(2,'0')}.json`);
+            monthlyData[m] = r.ok ? await r.json() : [];
+        } catch (_) { monthlyData[m] = []; }
+    }
+
+    const total = Object.values(monthlyData).reduce((s, a) => s + a.length, 0);
+    if (total === 0) return false;
+
+    document.getElementById('monthSection').style.display = 'block';
+    document.getElementById('legendBox').style.display = 'block';
+    setStatus(`📦 Loaded ${total} pre-fetched observations. Use "Load eBird Data" to refresh.`);
+    showMonth(1);
+    return true;
+}
+
+// ================================================================
+//  HEATMAP RENDERING
+// ================================================================
+
+function showMonth(m) {
+    m = parseInt(m, 10);
+    curMonth = m;
+    document.getElementById('monthSlider').value = m;
+    document.getElementById('monthDisplay').textContent = MONTH_NAMES[m - 1];
+
+    const data = monthlyData[m] || [];
+    document.getElementById('obsCount').textContent =
+        `${data.length} observation${data.length === 1 ? '' : 's'}`;
+
+    // Remove old layer
+    if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
+    if (!data.length) return;
+
+    // Build [lat, lng, intensity]
+    const maxC = Math.max(...data.map(d => d.count), 1);
+    const pts  = data.map(d => [
+        d.lat,
+        d.lng,
+        Math.max(0.25, d.count / maxC)
+    ]);
+
+    heatLayer = L.heatLayer(pts, {
+        radius: 22,
+        blur: 18,
+        maxZoom: 10,
+        max: 1.0,
+        minOpacity: 0.25,
+        gradient: {
+            0.0: 'rgba(255,255,200,0.15)',
+            0.15:'rgba(254,217,118,0.45)',
+            0.35:'rgba(254,178,76,0.65)',
+            0.55:'rgba(253,141,60,0.78)',
+            0.75:'rgba(240,59,32,0.88)',
+            1.0: 'rgba(189,0,38,1)'
+        }
+    }).addTo(map);
+}
+
+// ================================================================
+//  ANIMATION
+// ================================================================
+
+function togglePlay() {
+    playing ? stopPlay() : startPlay();
+}
+function startPlay() {
+    playing = true;
+    document.getElementById('playBtn').textContent = '⏸ Pause';
+    playTimer = setInterval(() => stepMonth(1), 1500);
+}
+function stopPlay() {
+    playing = false;
+    document.getElementById('playBtn').textContent = '▶ Play';
+    clearInterval(playTimer);
+    playTimer = null;
+}
+function stepMonth(dir) {
+    let m = curMonth + dir;
+    if (m > 12) m = 1;
+    if (m < 1)  m = 12;
+    showMonth(m);
+}
+
+// ================================================================
+//  CACHED & STATIC BOOT
+// ================================================================
+
+(async function boot() {
+    // 1. Try localStorage cache
+    const year = document.getElementById('yearSelect').value;
+    const ck = `ebird_${SPECIES_CODE}_${year}`;
+    try {
+        const cached = localStorage.getItem(ck);
+        if (cached) {
+            monthlyData = JSON.parse(cached);
+            const total = Object.values(monthlyData).reduce((s, a) => s + a.length, 0);
+            if (total > 0) {
+                document.getElementById('monthSection').style.display = 'block';
+                document.getElementById('legendBox').style.display = 'block';
+                setStatus(`📦 ${total} cached observations loaded. Click "Load eBird Data" to refresh.`);
+                showMonth(1);
+                return;
+            }
+        }
+    } catch (_) {}
+
+    // 2. Try pre-fetched static JSON files
+    const ok = await tryLoadStatic();
+    if (ok) return;
+
+    // 3. No data — prompt user
+    setStatus('Enter your eBird API key and click "Load eBird Data" to begin.');
+})();
+</script>
+
+</body>
+</html>
