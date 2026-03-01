@@ -45,62 +45,74 @@ SPECIES_CODE = "verfly"                     # eBird code for Vermilion Flycatche
 SPECIES_SCI  = "Pyrocephalus rubinus"
 
 # Regions covering the species' range (Americas)
+# We use subnational1 (state-level) regions for Mexico and Brazil
+# to avoid response truncation on country-level queries.
 REGIONS = [
-    # USA – key states
+    # USA – key states in breeding / wintering / vagrant range
     "US-AZ", "US-TX", "US-NM", "US-CA", "US-OK", "US-LA", "US-FL",
     "US-NV", "US-UT", "US-CO", "US-KS", "US-AR", "US-MS",
-    # Mexico
-    "MX",
+    "US-GA", "US-SC", "US-AL", "US-NE", "US-MO",
+    # Mexico – individual states (species is resident/common across most of MX)
+    "MX-AGU", "MX-BCN", "MX-BCS", "MX-CAM", "MX-CHH", "MX-CHP",
+    "MX-COA", "MX-COL", "MX-DIF", "MX-DUR", "MX-GRO", "MX-GUA",
+    "MX-HID", "MX-JAL", "MX-MEX", "MX-MIC", "MX-MOR", "MX-NAY",
+    "MX-NLE", "MX-OAX", "MX-PUE", "MX-QUE", "MX-ROO", "MX-SIN",
+    "MX-SLP", "MX-SON", "MX-TAB", "MX-TAM", "MX-TLA", "MX-VER",
+    "MX-YUC", "MX-ZAC",
     # Central America
     "GT", "BZ", "HN", "SV", "NI", "CR", "PA",
-    # South America
-    "CO", "VE", "EC", "PE", "BR", "BO", "PY", "AR", "UY", "CL", "GY", "SR", "TT",
+    # South America – major countries with subnational for Brazil
+    "CO", "VE", "EC", "PE", "BO", "PY", "AR", "UY", "CL",
+    "GY", "SR", "TT",
+    # Brazil – key states where the species occurs
+    "BR-SP", "BR-RJ", "BR-MG", "BR-GO", "BR-DF", "BR-MS", "BR-MT",
+    "BR-BA", "BR-PR", "BR-SC", "BR-RS", "BR-TO", "BR-MA", "BR-PI",
+    "BR-CE", "BR-PE", "BR-PA",
 ]
 
-# Days to sample per month (more days = more coverage but more API calls)
-SAMPLE_DAYS = [5, 15, 25]
+# Days to sample per month — more days = much better coverage
+SAMPLE_DAYS = [1, 5, 10, 15, 20, 25, 28]
 
 API_BASE = "https://api.ebird.org/v2"
-DELAY    = 0.2          # seconds between API calls (respect rate limits)
+DELAY    = 0.15         # seconds between API calls (respect rate limits)
 
 # ── Helpers ──────────────────────────────────────────────────────
 
 def ebird_get(endpoint, api_key, params=None):
-    """Make a GET request to the eBird API and return parsed JSON (or [])."""
+    """Make a GET request to the eBird API and return (status_code, data)."""
     url = f"{API_BASE}{endpoint}"
     headers = {"X-eBirdApiToken": api_key}
     try:
         r = requests.get(url, headers=headers, params=params, timeout=30)
         if r.status_code == 200:
-            return r.json()
+            return r.status_code, r.json()
         else:
-            return []
+            return r.status_code, []
     except requests.RequestException as exc:
         print(f"  ⚠  Request failed: {exc}")
-        return []
+        return 0, []
 
 
-def test_species_historic(api_key, year):
-    """Check if the species-specific historic endpoint works."""
-    endpoint = f"/data/obs/US-TX/historic/{year}/6/15/{SPECIES_CODE}"
-    data = ebird_get(endpoint, api_key)
-    if isinstance(data, list):
-        return True
-    return False
+def fetch_historic(api_key, region, year, month, day):
+    """
+    Fetch observations on a specific date using the general historic endpoint,
+    then filter for our target species.
 
+    Endpoint: GET /v2/data/obs/{regionCode}/historic/{y}/{m}/{d}
 
-def fetch_historic_species(api_key, region, year, month, day):
-    """Fetch using species-specific historic endpoint."""
-    endpoint = f"/data/obs/{region}/historic/{year}/{month}/{day}/{SPECIES_CODE}"
-    return ebird_get(endpoint, api_key)
-
-
-def fetch_historic_general(api_key, region, year, month, day):
-    """Fetch all observations on a date, then filter for target species."""
+    The eBird API does NOT have a species-specific variant of the historic
+    endpoint, so we must fetch all species and filter client-side.
+    We use maxResults=10000 to avoid response truncation.
+    """
     endpoint = f"/data/obs/{region}/historic/{year}/{month}/{day}"
-    data = ebird_get(endpoint, api_key)
+    params = {
+        "maxResults": 10000,
+        "includeProvisional": "true",
+    }
+    status, data = ebird_get(endpoint, api_key, params=params)
     if not isinstance(data, list):
         return []
+    # Filter for our target species
     return [
         o for o in data
         if o.get("speciesCode") == SPECIES_CODE
@@ -109,9 +121,20 @@ def fetch_historic_general(api_key, region, year, month, day):
 
 
 def fetch_recent(api_key, region):
-    """Fetch recent observations (last 30 days) of the species in a region."""
+    """
+    Fetch recent observations (last 30 days) of the species in a region.
+
+    Endpoint: GET /v2/data/obs/{regionCode}/recent/{speciesCode}
+
+    This IS a species-specific endpoint and works reliably.
+    """
     endpoint = f"/data/obs/{region}/recent/{SPECIES_CODE}"
-    return ebird_get(endpoint, api_key, params={"back": 30})
+    params = {
+        "back": 30,
+        "includeProvisional": "true",
+    }
+    status, data = ebird_get(endpoint, api_key, params=params)
+    return data if isinstance(data, list) else []
 
 
 def to_record(obs):
@@ -162,22 +185,33 @@ def main():
     outdir = args.outdir
     os.makedirs(outdir, exist_ok=True)
 
-    print(f"Species:  {SPECIES_SCI} ({SPECIES_CODE})")
-    print(f"Year:     {year}")
-    print(f"Regions:  {len(REGIONS)}")
-    print(f"Days/mo:  {SAMPLE_DAYS}")
-    print(f"Output:   {outdir}/")
+    total_regions = len(REGIONS)
+    total_api_calls = total_regions * 12 * len(SAMPLE_DAYS) + total_regions
+    est_minutes = total_api_calls * DELAY / 60
+
+    print(f"Species:   {SPECIES_SCI} ({SPECIES_CODE})")
+    print(f"Year:      {year}")
+    print(f"Regions:   {total_regions}")
+    print(f"Days/mo:   {SAMPLE_DAYS}")
+    print(f"API calls: ~{total_api_calls}  (est. {est_minutes:.0f} min)")
+    print(f"Output:    {outdir}/")
+    print()
+    print("Strategy: General historic endpoint + species filter")
+    print("          (eBird API has no species-specific historic endpoint)")
     print()
 
-    # Test species-specific endpoint
-    print("🔍 Testing species-specific historic endpoint… ", end="", flush=True)
-    use_species = test_species_historic(api_key, year)
-    if use_species:
-        print("✅ Available (fast mode)")
-        fetch_fn = fetch_historic_species
+    # Quick API key validation
+    print("🔍 Validating API key… ", end="", flush=True)
+    status, data = ebird_get(f"/data/obs/US-TX/recent/{SPECIES_CODE}",
+                              api_key, params={"back": 1, "maxResults": 1})
+    if status == 200:
+        print(f"✅ Valid (got {len(data)} record(s) from US-TX)")
+    elif status == 403:
+        print("❌ Invalid API key! Check your key and try again.")
+        sys.exit(1)
     else:
-        print("❌ Not available — using general endpoint with filter (slower)")
-        fetch_fn = fetch_historic_general
+        print(f"⚠  Unexpected status {status}, continuing anyway…")
+    print()
 
     total_obs = 0
 
@@ -189,29 +223,37 @@ def main():
         ][month - 1]
         print(f"\n── {month_name} {year} ──")
 
-        # Historic queries
+        # Historic queries for this month
+        queries_done = 0
         for day in SAMPLE_DAYS:
             for region in REGIONS:
-                data = fetch_fn(api_key, region, year, month, day)
+                data = fetch_historic(api_key, region, year, month, day)
                 if data:
                     month_records.extend(to_record(o) for o in data)
+                queries_done += 1
                 time.sleep(DELAY)
-            print(f"  Day {day:2d}: {len(month_records)} cumulative obs")
 
-        # Also fetch recent for current-month boost
+            unique_so_far = len(dedup(month_records))
+            print(f"  Day {day:2d}: {unique_so_far} unique obs "
+                  f"({queries_done}/{total_regions * len(SAMPLE_DAYS)} queries)")
+
+        # Also fetch recent observations and bucket by month
+        recent_added = 0
         for region in REGIONS:
             recent = fetch_recent(api_key, region)
             for o in recent:
-                obs_month = None
                 dt = o.get("obsDt", "")
                 if dt and "-" in dt:
                     try:
                         obs_month = int(dt.split("-")[1])
                     except (ValueError, IndexError):
-                        pass
-                if obs_month == month:
-                    month_records.append(to_record(o))
+                        continue
+                    if obs_month == month:
+                        month_records.append(to_record(o))
+                        recent_added += 1
             time.sleep(DELAY)
+        if recent_added:
+            print(f"  Recent: +{recent_added} observations from last 30 days")
 
         # Deduplicate
         month_records = dedup(month_records)
@@ -224,10 +266,23 @@ def main():
             json.dump(month_records, f, separators=(",", ":"))
         print(f"  💾 Saved to {outfile}")
 
-    print(f"\n{'='*50}")
+    print(f"\n{'='*55}")
     print(f"✅ Done! {total_obs} total observations across 12 months.")
     print(f"   Files saved in {outdir}/")
-    print(f"   Commit and push to GitHub to see them on your map.")
+    print()
+    for month in range(1, 13):
+        mn = ["Jan","Feb","Mar","Apr","May","Jun",
+              "Jul","Aug","Sep","Oct","Nov","Dec"][month - 1]
+        fpath = os.path.join(outdir, f"month-{month:02d}.json")
+        with open(fpath) as f:
+            n = len(json.load(f))
+        bar = "█" * (n // 10) if n else "·"
+        print(f"   {mn}: {n:>5} obs  {bar}")
+    print()
+    print("Next steps:")
+    print("   git add data/")
+    print("   git commit -m 'Update bird migration data'")
+    print("   git push")
 
 
 if __name__ == "__main__":

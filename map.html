@@ -333,16 +333,27 @@ const MONTH_NAMES  = [
 ];
 
 // Regions to query — covering the full range of Vermilion Flycatcher
+// Use subnational1 for MX & BR to avoid response truncation
 const REGIONS = [
-    // USA – key states in breeding / wintering range
+    // USA – key states
     'US-AZ','US-TX','US-NM','US-CA','US-OK','US-LA','US-FL',
     'US-NV','US-UT','US-CO','US-KS','US-AR','US-MS',
-    // Mexico
-    'MX',
+    'US-GA','US-SC','US-AL','US-NE','US-MO',
+    // Mexico – individual states
+    'MX-AGU','MX-BCN','MX-BCS','MX-CAM','MX-CHH','MX-CHP',
+    'MX-COA','MX-COL','MX-DIF','MX-DUR','MX-GRO','MX-GUA',
+    'MX-HID','MX-JAL','MX-MEX','MX-MIC','MX-MOR','MX-NAY',
+    'MX-NLE','MX-OAX','MX-PUE','MX-QUE','MX-ROO','MX-SIN',
+    'MX-SLP','MX-SON','MX-TAB','MX-TAM','MX-TLA','MX-VER',
+    'MX-YUC','MX-ZAC',
     // Central America
     'GT','BZ','HN','SV','NI','CR','PA',
     // South America
-    'CO','VE','EC','PE','BR','BO','PY','AR','UY','CL','GY','SR','TT'
+    'CO','VE','EC','PE','BO','PY','AR','UY','CL','GY','SR','TT',
+    // Brazil – key states
+    'BR-SP','BR-RJ','BR-MG','BR-GO','BR-DF','BR-MS','BR-MT',
+    'BR-BA','BR-PR','BR-SC','BR-RS','BR-TO','BR-MA','BR-PI',
+    'BR-CE','BR-PE','BR-PA'
 ];
 
 // Sample days per month (the Python script uses more; live mode uses fewer)
@@ -358,7 +369,6 @@ let playing      = false;
 let playTimer    = null;
 let totalQ       = 0;
 let doneQ        = 0;
-let speciesEndpointOk = null;   // null = untested
 
 // ================================================================
 //  MAP INIT
@@ -396,44 +406,24 @@ function updateProgress() {
 }
 
 /**
- * Test whether the species-specific historic endpoint is available.
- * URL pattern: /v2/data/obs/{region}/historic/{y}/{m}/{d}/{speciesCode}
- */
-async function testSpeciesEndpoint(apiKey) {
-    const url = `https://api.ebird.org/v2/data/obs/US-TX/historic/2025/6/15/${SPECIES_CODE}`;
-    try {
-        const r = await fetch(url, { headers: { 'X-eBirdApiToken': apiKey } });
-        if (r.ok) { speciesEndpointOk = true; return true; }
-    } catch (_) {}
-    speciesEndpointOk = false;
-    return false;
-}
-
-/**
  * Fetch historic observations for one region + date.
- * Tries species-specific URL first; falls back to general + filter.
+ *
+ * Uses the GENERAL historic endpoint + client-side species filter.
+ * The eBird API does NOT have a species-specific historic endpoint.
+ * We add maxResults=10000 to avoid response truncation.
  */
 async function fetchHistoric(apiKey, region, y, m, d) {
-    // Build URL
-    let url;
-    if (speciesEndpointOk) {
-        url = `https://api.ebird.org/v2/data/obs/${region}/historic/${y}/${m}/${d}/${SPECIES_CODE}`;
-    } else {
-        url = `https://api.ebird.org/v2/data/obs/${region}/historic/${y}/${m}/${d}`;
-    }
-
+    const url = `https://api.ebird.org/v2/data/obs/${region}/historic/${y}/${m}/${d}?maxResults=10000&includeProvisional=true`;
     try {
         const r = await fetch(url, { headers: { 'X-eBirdApiToken': apiKey } });
         if (!r.ok) return [];
         let data = await r.json();
 
-        // If general endpoint, filter for our species
-        if (!speciesEndpointOk) {
-            data = data.filter(o =>
-                o.speciesCode === SPECIES_CODE ||
-                (o.sciName && o.sciName.toLowerCase().includes('pyrocephalus'))
-            );
-        }
+        // Filter for our target species
+        data = data.filter(o =>
+            o.speciesCode === SPECIES_CODE ||
+            (o.sciName && o.sciName.toLowerCase().includes('pyrocephalus'))
+        );
 
         return data.map(o => ({
             lat: o.lat,
@@ -452,7 +442,7 @@ async function fetchHistoric(apiKey, region, y, m, d) {
  * Fetch recent observations of the species in a region (last 30 days).
  */
 async function fetchRecent(apiKey, region) {
-    const url = `https://api.ebird.org/v2/data/obs/${region}/recent/${SPECIES_CODE}?back=30`;
+    const url = `https://api.ebird.org/v2/data/obs/${region}/recent/${SPECIES_CODE}?back=30&includeProvisional=true`;
     try {
         const r = await fetch(url, { headers: { 'X-eBirdApiToken': apiKey } });
         if (!r.ok) return [];
@@ -494,14 +484,9 @@ async function loadAllData() {
     doneQ  = 0;
     updateProgress();
 
-    // 1. Test species-specific endpoint
-    setStatus('🔍 Testing API endpoint…');
-    await testSpeciesEndpoint(apiKey);
-    setStatus(speciesEndpointOk
-        ? '✅ Species-specific endpoint available — fast mode!'
-        : '⚠️ Using general endpoint + filter (slower but works).');
+    setStatus('📡 Fetching historic data (general endpoint + species filter)…');
 
-    // 2. Historic data for each month
+    // 1. Historic data for each month
     for (let month = 1; month <= 12; month++) {
         for (const region of REGIONS) {
             for (const day of SAMPLE_DAYS) {
@@ -515,7 +500,7 @@ async function loadAllData() {
         setStatus(`📊 Month ${month}/12 done — ${monthlyData[month].length} obs so far`);
     }
 
-    // 3. Also pull recent observations (adds current-month data)
+    // 2. Also pull recent observations (adds current-month data)
     setStatus('📡 Fetching recent (last 30 days)…');
     for (const region of REGIONS) {
         const obs = await fetchRecent(apiKey, region);
@@ -527,10 +512,10 @@ async function loadAllData() {
         await sleep(100);
     }
 
-    // 4. Deduplicate
+    // 3. Deduplicate
     for (let m = 1; m <= 12; m++) monthlyData[m] = dedup(monthlyData[m]);
 
-    // 5. Done
+    // 4. Done
     pw.style.display = 'none';
     btn.disabled = false;
     document.getElementById('monthSection').style.display = 'block';
